@@ -52,15 +52,23 @@ export async function createTeam(input: unknown) {
   const data = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
   const name = String(data.name ?? '').trim();
   const mascot = String(data.mascot ?? '').trim();
-  const rawMembers = Array.isArray(data.members) ? data.members : [];
+  const rawMembers = data.members === undefined ? [] : data.members;
 
   if (!name || !mascot) {
     throw Object.assign(new Error('Team name and mascot are required.'), { status: 400 });
   }
+  if (!Array.isArray(rawMembers)) {
+    throw Object.assign(new Error('Team members must be an array of existing user IDs.'), { status: 400 });
+  }
 
-  const members = (rawMembers as Array<string | { toString(): string }> )
-    .map((member) => (typeof member === 'string' ? member : member?.toString?.() ?? ''))
-    .filter((member) => member.length > 0 && mongoose.isValidObjectId(member));
+  const members = rawMembers.map((member) => typeof member === 'string' ? member.trim() : '');
+  if (members.some((member) => !mongoose.isValidObjectId(member))) {
+    throw Object.assign(new Error('Team members must be valid MongoDB ObjectIds.'), { status: 400 });
+  }
+  const uniqueMembers = [...new Set(members)];
+  if (uniqueMembers.length > 0 && await User.countDocuments({ _id: { $in: uniqueMembers } }) !== uniqueMembers.length) {
+    throw Object.assign(new Error('Team members must reference existing users.'), { status: 400 });
+  }
 
   const team = await Team.create({ name, mascot, members });
   return team.toJSON();
@@ -69,18 +77,23 @@ export async function createTeam(input: unknown) {
 export async function getLeaderboard() {
   const grouped = await Activity.aggregate([
     { $group: { _id: '$team', totalPoints: { $sum: '$points' } } },
-    { $sort: { totalPoints: -1, _id: 1 } },
   ]);
 
-  const teamIds = grouped.map(({ _id }) => _id);
-  const teams = await Team.find({ _id: { $in: teamIds } }).lean();
-  const teamMap = new Map(teams.map((team) => [team._id.toString(), team.name]));
+  const teams = await Team.find().sort({ name: 1, _id: 1 }).lean();
+  const pointsByTeam = new Map(grouped.map(({ _id, totalPoints }) => [_id.toString(), totalPoints]));
 
-  return grouped.map(({ _id, totalPoints }, index) => ({
-    teamName: teamMap.get(_id.toString()) ?? 'Unknown team',
-    totalPoints,
+  return teams
+    .map((team) => ({
+      id: team._id.toString(),
+      teamName: team.name,
+      totalPoints: pointsByTeam.get(team._id.toString()) ?? 0,
+    }))
+    .sort((left, right) => right.totalPoints - left.totalPoints || left.teamName.localeCompare(right.teamName) || left.id.localeCompare(right.id))
+    .map((entry, index) => ({
+    teamName: entry.teamName,
+    totalPoints: entry.totalPoints,
     rank: index + 1,
-  }));
+    }));
 }
 
 export async function suggestWorkouts(userEmail: string) {
@@ -95,17 +108,13 @@ export async function suggestWorkouts(userEmail: string) {
   const focus = user.fitnessGoal || (latestActivity?.type === 'strength' ? 'strength' : 'endurance');
   const workouts = await Workout.find({ focus }).sort({ title: 1 }).lean();
 
-  if (workouts.length === 0) {
-    const fallback = await Workout.find().sort({ title: 1 }).limit(1).lean();
-    if (fallback.length === 0) {
-      return [];
-    }
-    return [{ ...fallback[0], reason: `Your recent ${latestActivity?.type ?? 'activity'} suggests a ${focus}-focused recovery plan.` }];
-  }
+  if (workouts.length === 0) return [];
 
   return workouts.map((workout) => ({
     ...workout,
-    reason: `Your recent ${latestActivity?.type ?? 'activity'} supports a ${focus}-focused routine like ${workout.title}.`,
+    reason: user.fitnessGoal
+      ? `Your ${user.fitnessGoal} fitness goal supports a ${focus}-focused routine like ${workout.title}.`
+      : `Your recent ${latestActivity?.type ?? 'activity'} supports a ${focus}-focused routine like ${workout.title}.`,
   }));
 }
 
