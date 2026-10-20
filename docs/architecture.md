@@ -48,3 +48,4 @@ OctoFit Tracker is a three-tier application for a school fitness program. The st
   - Use after the data and API contracts are fixed to catch TypeScript or Express compile problems before verifying runtime behavior again.
 - Frontend build command: `npm run build --prefix octofit-tracker/frontend`
   - Use after the UI is implemented to confirm the Vite/React app still builds cleanly with the real API-driven components.
+
