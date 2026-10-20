@@ -46,7 +46,7 @@ export default function Activities() {
       empty={activities.length === 0 && !loading && !error}
       emptyMessage="No activities available."
     >
-      <ul className="list-group list-group-flush">
+      <ul aria-label="Activity records" className="list-group list-group-flush">
         {activities.map((activity, index) => (
           <li key={`${activity.type}-${activity.occurredAt ?? index}`} className="list-group-item">
             <strong>{activity.type}</strong> · {activity.minutes} minutes · {activity.points} points
